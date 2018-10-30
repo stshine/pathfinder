@@ -10,7 +10,7 @@
 
 use arrayvec::ArrayVec;
 use euclid::{Angle, Point2D, Vector2D};
-use lyon_geom::{CubicBezierSegment, QuadraticBezierSegment};
+use lyon_geom::{Arc, CubicBezierSegment, QuadraticBezierSegment};
 use lyon_path::builder::{FlatPathBuilder, PathBuilder};
 use pathfinder_path_utils::cubic_to_quadratic::CubicToQuadraticSegmentIter;
 use std::ops::Range;
@@ -178,11 +178,21 @@ impl PathBuilder for Builder {
     }
 
     fn arc(&mut self,
-           _center: Point2D<f32>,
-           _radii: Vector2D<f32>,
-           _angle: Angle<f32>,
-           _x_rotation: Angle<f32>) {
-        panic!("TODO: Support arcs in the Pathfinder builder!")
+           center: Point2D<f32>,
+           radii: Vector2D<f32>,
+           sweep_angle: Angle<f32>,
+           x_rotation: Angle<f32>) {
+        let start_angle = (self.current_position() - center).angle_from_x_axis() - x_rotation;
+        let arc = Arc {
+            center,
+            radii,
+            start_angle,
+            sweep_angle,
+            x_rotation
+        };
+        arc.for_each_quadratic_bezier(&mut |segment: &QuadraticBezierSegment<f32>| {
+            self.quadratic_bezier_to(segment.ctrl, segment.to)
+        });
     }
 }
 

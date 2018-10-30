@@ -11,7 +11,7 @@
 //! A version of Lyon's `cubic_to_quadratic` that is less sensitive to floating point error.
 
 use euclid::Point2D;
-use lyon_geom::{CubicBezierSegment, QuadraticBezierSegment};
+use lyon_geom::{Arc, CubicBezierSegment, QuadraticBezierSegment};
 use lyon_path::PathEvent;
 
 const MAX_APPROXIMATION_ITERATIONS: u8 = 32;
@@ -70,9 +70,36 @@ impl Iterator for CubicToQuadraticSegmentIter {
     }
 }
 
-pub struct CubicToQuadraticTransformer<I> where I: Iterator<Item = PathEvent> {
+pub struct ArcToQuadraticSegmentIter {
+    segments: Vec<QuadraticBezierSegment<f32>>,
+    // error_bound: f32,
+}
+
+impl ArcToQuadraticSegmentIter {
+    pub fn new(arc: &Arc<f32>) -> ArcToQuadraticSegmentIter {
+        let mut segments = vec![];
+        arc.for_each_quadratic_bezier(&mut |segment: &QuadraticBezierSegment<f32>| {
+            segments.push(*segment);
+        });
+        ArcToQuadraticSegmentIter {
+            segments: segments,
+        }
+    }
+}
+
+impl Iterator for ArcToQuadraticSegmentIter {
+    type Item = QuadraticBezierSegment<f32>;
+
+    fn next(&mut self) -> Option<QuadraticBezierSegment<f32>> {
+        self.segments.pop()
+    }
+}
+
+pub struct CubicToQuadraticTransformer<I> where
+    I: Iterator<Item = PathEvent>,
+{
     inner: I,
-    segment_iter: Option<CubicToQuadraticSegmentIter>,
+    segment_iter: Option<Box<dyn Iterator<Item = QuadraticBezierSegment<f32>>>>,
     last_point: Point2D<f32>,
     error_bound: f32,
 }
@@ -111,8 +138,10 @@ impl<I> Iterator for CubicToQuadraticTransformer<I> where I: Iterator<Item = Pat
                     to: to,
                 };
                 self.last_point = to;
-                self.segment_iter = Some(CubicToQuadraticSegmentIter::new(&cubic,
-                                                                          self.error_bound));
+                self.segment_iter = Some(Box::new(CubicToQuadraticSegmentIter::new(
+                    &cubic,
+                    self.error_bound
+                )));
                 self.next()
             }
             Some(PathEvent::MoveTo(to)) => {
@@ -129,8 +158,19 @@ impl<I> Iterator for CubicToQuadraticTransformer<I> where I: Iterator<Item = Pat
             }
             Some(PathEvent::Close) => Some(PathEvent::Close),
             Some(PathEvent::Arc(to, vector, angle_from, angle_to)) => {
+                let start_angle = (to - self.last_point).angle_from_x_axis() - angle_from;
+                let arc = Arc {
+                    center: to,
+                    radii: vector,
+                    start_angle,
+                    sweep_angle: angle_to,
+                    x_rotation: angle_from,
+                };
                 self.last_point = to;
-                Some(PathEvent::Arc(to, vector, angle_from, angle_to))
+                self.segment_iter = Some(Box::new(ArcToQuadraticSegmentIter::new(
+                    &arc
+                )));
+                self.next()
             }
         }
     }
